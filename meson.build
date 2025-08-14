@@ -19,3 +19,6 @@ configure_file(output: 'numbfs_config.h', configuration : private_cfg)
 
 executable('mkfs.numbfs', ['mkfs.c', 'lib.c'], install: true)
 executable('fsck.numbfs', ['fsck.c', 'lib.c'], install: true)
+
+numbfs_test = executable('numbfs_unit_test', ['test.c', 'lib.c'])
+test('numbfs_test', numbfs_test)
