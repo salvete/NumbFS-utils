@@ -18,3 +18,4 @@ endif
 configure_file(output: 'numbfs_config.h', configuration : private_cfg)
 
 executable('mkfs.numbfs', ['mkfs.c', 'lib.c'], install: true)
+executable('fsck.numbfs', ['fsck.c', 'lib.c'], install: true)
