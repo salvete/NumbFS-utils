@@ -1,0 +1,2 @@
+option('numbfs_debug', type : 'boolean', value : false,
+       description: 'Enable numbfs debug info')
