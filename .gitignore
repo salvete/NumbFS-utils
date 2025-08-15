@@ -10,7 +10,8 @@
 #
 # Normal rules (sorted alphabetically)
 #
-.*
+.vscode
+build
 *.a
 *.asn1.[ch]
 *.bin
