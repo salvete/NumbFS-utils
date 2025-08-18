@@ -361,7 +361,7 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
                 goto exit;
 
         /* update metadata */
-        inode_i->mode = S_IFDIR;
+        inode_i->mode = S_IFDIR | 0755;
         inode_i->nlink = 2;
         inode_i->uid = (__uint16_t)getuid();
         inode_i->gid = (__uint16_t)getgid();
