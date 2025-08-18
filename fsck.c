@@ -131,6 +131,8 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
         else
                 printf("    inode type:                 REGULAR FILE\n");
         printf("    link count:                 %d\n", inode_i->nlink);
+        printf("    inode uid:                  %d\n", inode_i->uid);
+        printf("    inode gid:                  %d\n", inode_i->gid);
         printf("    inode size:                 %d\n\n", inode_i->size);
 
         if (S_ISDIR(inode_i->mode)) {
