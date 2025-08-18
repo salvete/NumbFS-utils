@@ -289,10 +289,12 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         dir = (struct numbfs_dirent*)buf;
         memcpy(dir->name, "..", 2);
         dir->name[2] = '\0';
+        dir->name_len = 2;
         dir->ino = cpu_to_le16(pnid);
         dir++;
         memcpy(dir->name, ".", 1);
         dir->name[1] = '\0';
+        dir->name_len = 1;
         dir->ino = cpu_to_le16(nid);
         err = numbfs_pwrite_inode(inode_i, buf, 0);
         if (err)
