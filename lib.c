@@ -132,7 +132,7 @@ int numbfs_get_inode(struct numbfs_superblock_info *sbi,
 
         inode = ((struct numbfs_inode*)buf) + (inode_i->nid % NUMBFS_NODES_PER_BLOCK);
         inode_i->sbi = sbi;
-        inode_i->mode   = le16_to_cpu(inode->i_mode);
+        inode_i->mode   = le32_to_cpu(inode->i_mode);
         inode_i->nlink  = le16_to_cpu(inode->i_nlink);
         inode_i->uid    = le16_to_cpu(inode->i_uid);
         inode_i->gid    = le16_to_cpu(inode->i_gid);
@@ -187,7 +187,7 @@ static int numbfs_dump_inode(struct numbfs_inode_info *inode_i)
 
         inode = ((struct numbfs_inode*)meta) + (nid % NUMBFS_NODES_PER_BLOCK);
         inode->i_ino    = cpu_to_le16(inode_i->nid);
-        inode->i_mode   = cpu_to_le16(inode_i->mode);
+        inode->i_mode   = cpu_to_le32(inode_i->mode);
         inode->i_nlink  = cpu_to_le16(inode_i->nlink);
         inode->i_uid    = cpu_to_le16(inode_i->uid);
         inode->i_gid    = cpu_to_le16(inode_i->gid);

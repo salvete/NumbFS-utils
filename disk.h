@@ -47,11 +47,10 @@ struct numbfs_super_block {
 /* 64-byte on-disk numbfs inode */
 struct numbfs_inode {
 	__le16 i_ino;
-	__le16 i_mode;
 	__le16 i_nlink;
 	__le16 i_uid;
 	__le16 i_gid;
-	__u8 reserved1[2]; /* padding */
+	__le32 i_mode;
 	__le32 i_size;
 	/* start block addr of xattrs */
 	__le32 i_xattr_start;
