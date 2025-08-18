@@ -261,6 +261,41 @@ int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
         return numbfs_read_block(inode_i->sbi, buf, target);
 }
 
+/* get a empty inode */
+int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
+{
+        int ret, i, err, byte, bit;
+        char buf[BYTES_PER_BLOCK];
+
+        ret = -1;
+        for (i = 0; i < sbi->num_inodes; i++) {
+                /* read a new block */
+                if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
+                        err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, i));
+                        if (err)
+                                return err;
+                }
+
+                if (i <= NUMBFS_ROOT_NID)
+                        continue;
+
+                byte = numbfs_bmap_byte(i);
+                bit = numbfs_bmap_bit(i);
+                if (!(buf[byte] & (1 << bit))) {
+                        ret = i;
+                        /* set this bit to 1 */
+                        buf[byte] |= (1 << bit);
+                        err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, i));
+                        if (err)
+                                return err;
+                        break;
+                }
+
+        }
+
+        return ret;
+}
+
 /* make a empty dir */
 int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
                      int pnid, int nid)
@@ -291,11 +326,36 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         dir->name[2] = '\0';
         dir->name_len = 2;
         dir->ino = cpu_to_le16(pnid);
+
         dir++;
         memcpy(dir->name, ".", 1);
         dir->name[1] = '\0';
         dir->name_len = 1;
         dir->ino = cpu_to_le16(nid);
+
+
+        /* make an extra lost+found dir for root inode */
+        if (pnid == nid) {
+#define NUMBFS_LOSTFOUND        "lost+found"
+                int child_nid = numbfs_alloc_inode(sbi);
+
+                if (child_nid <= NUMBFS_ROOT_NID) {
+                        err = -ENOMEM;
+                        goto exit;
+                }
+
+                /* make a child dir */
+                err = numbfs_empty_dir(sbi, nid, child_nid);
+                if (err)
+                        goto exit;
+
+                dir++;
+                memcpy(dir->name, NUMBFS_LOSTFOUND, strlen(NUMBFS_LOSTFOUND));
+                dir->name[strlen(NUMBFS_LOSTFOUND)] = '\0';
+                dir->name_len = strlen(NUMBFS_LOSTFOUND);
+                dir->ino = cpu_to_le16(child_nid);
+        }
+
         err = numbfs_pwrite_inode(inode_i, buf, 0);
         if (err)
                 goto exit;
@@ -304,7 +364,8 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         inode_i->mode = S_IFDIR;
         inode_i->nlink = 2;
         inode_i->uid = inode_i->gid = 0;
-        inode_i->size = sizeof(struct numbfs_dirent) * 2;
+        inode_i->size = pnid == nid ? sizeof(struct numbfs_dirent) * 3 :
+                                      sizeof(struct numbfs_dirent) * 2;
         err = numbfs_dump_inode(inode_i);
 exit:
         free(inode_i);

@@ -65,6 +65,22 @@ static inline int numbfs_inode_blk(struct numbfs_superblock_info *sbi,
         return sbi->inode_start + nid / NUMBFS_NODES_PER_BLOCK;
 }
 
+static inline int numbfs_imap_blk(struct numbfs_superblock_info *sbi,
+                                  int nid)
+{
+        return sbi->ibitmap_start +  nid / NUMBFS_BLOCKS_PER_BLOCK;
+}
+
+static inline int numbfs_imap_byte(int nid)
+{
+        return  (nid % NUMBFS_BLOCKS_PER_BLOCK) / BITS_PER_BYTE;
+}
+
+static inline int numbfs_imap_bit(int nid)
+{
+        return (nid % NUMBFS_BLOCKS_PER_BLOCK) % BITS_PER_BYTE;
+}
+
 /* read/write the blkno-th block in the device */
 int numbfs_read_block(struct numbfs_superblock_info *sbi,
                       char buf[BYTES_PER_BLOCK], int blkno);
@@ -90,6 +106,8 @@ int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
                         char buf[BYTES_PER_BLOCK], int blkaddr);
 int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
                        char buf[BYTES_PER_BLOCK], int blkaddr);
+
+int numbfs_alloc_inode(struct numbfs_superblock_info *sbi);
 
 /* make an empty dir */
 int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
