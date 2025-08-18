@@ -8,6 +8,7 @@
 
 #include "utils.h"
 #include <linux/types.h>
+#include <dirent.h>
 
 #define NUMBFS_MAGIC    0x4E554D42 /* "NUMB" */
 
@@ -20,7 +21,7 @@
 #define NUMBFS_ROOT_NID	1
 
 #define NUMBFS_NUM_DATA_ENTRY	10
-#define NUMBFS_MAX_PATH_LEN	61
+#define NUMBFS_MAX_PATH_LEN	60
 #define NUMBFS_MAX_ATTR 32
 
 /* 128-byte on-disk numbfs superblock, 64 bytes should be enough, but... */
@@ -64,6 +65,7 @@ struct numbfs_inode {
 /* 64-byte on-disk numbfs dirent */
 struct numbfs_dirent {
 	__u8 name_len;
+	__u8 type;
 	char name[NUMBFS_MAX_PATH_LEN];
 	__le16 ino;
 };
