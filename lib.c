@@ -153,7 +153,7 @@ int numbfs_get_inode(struct numbfs_superblock_info *sbi,
  */
 int numbfs_inode_blkaddr(struct numbfs_inode_info *inode, int pos, bool alloc, bool extent)
 {
-        int blkno;
+        int blkno, err;
 
         if (extent) {
                 fprintf(stderr, "error: extent feature currently is not supported!\n");
@@ -166,11 +166,19 @@ int numbfs_inode_blkaddr(struct numbfs_inode_info *inode, int pos, bool alloc, b
         }
 
         if (alloc && inode->data[pos / BYTES_PER_BLOCK] == NUMBFS_HOLE) {
+                char buf[BYTES_PER_BLOCK];
+
                 blkno = numbfs_alloc_block(inode->sbi);
                 if (blkno < 0) {
                         fprintf(stderr, "failed to alloc data block\n");
                         return blkno;
                 }
+
+                memset(buf, 0, BYTES_PER_BLOCK);
+                err = numbfs_write_block(inode->sbi, buf, blkno);
+                if (err)
+                        return err;
+
                 inode->data[pos / BYTES_PER_BLOCK] = blkno;
         }
 
