@@ -105,9 +105,9 @@ int numbfs_inode_blkaddr(struct numbfs_inode_info *inode_i,
 
 /* read/write the logical block in inode's address space */
 int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
-                        char buf[BYTES_PER_BLOCK], int blkaddr);
+                        char buf[BYTES_PER_BLOCK], int offset, int len);
 int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
-                       char buf[BYTES_PER_BLOCK], int blkaddr);
+                       char buf[BYTES_PER_BLOCK], int offset, int len);
 
 int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid);
 int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid);

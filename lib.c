@@ -223,21 +223,39 @@ static int numbfs_dump_inode(struct numbfs_inode_info *inode_i)
         return 0;
 }
 
-/* write the buffer to the blkaddr-th block in the address space */
+/**
+ * write the buffer to the blkaddr-th block in the address space
+ * @buf: the content
+ * @offset: the position in the file's address space
+ * @len: write length
+ *
+ * Note that this helper does not support cross-block write
+ */
 int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
-                        char buf[BYTES_PER_BLOCK], int blkaddr)
+                        char buf[BYTES_PER_BLOCK], int offset, int len)
 {
         int target, err;
+        char tmp[BYTES_PER_BLOCK];
+        int off = offset % BYTES_PER_BLOCK;
+
+        if (off + len > BYTES_PER_BLOCK)
+                return -E2BIG;
 
         /* extend the inode size with holes */
-        inode_i->size = max(inode_i->size, (blkaddr + 1) * BYTES_PER_BLOCK);
+        inode_i->size = max(inode_i->size, offset + len);
 
-        target = numbfs_inode_blkaddr(inode_i, blkaddr * BYTES_PER_BLOCK,
+        target = numbfs_inode_blkaddr(inode_i, offset,
                                       true, false);
         if (target < 0)
                 return target;
 
-        err = numbfs_write_block(inode_i->sbi, buf, target);
+        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        if (err)
+                return err;
+
+        memcpy(tmp + off, buf, len);
+
+        err = numbfs_write_block(inode_i->sbi, tmp, target);
         if (err)
                 return err;
 
@@ -246,23 +264,31 @@ int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
 
 /* read the blkaddr-th block in the address space */
 int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
-                       char buf[BYTES_PER_BLOCK], int blkaddr)
+                       char buf[BYTES_PER_BLOCK], int offset, int len)
 {
-        int target;
+        int target, err;
+        char tmp[BYTES_PER_BLOCK];
+        int off = offset % BYTES_PER_BLOCK;
 
-        target = numbfs_inode_blkaddr(inode_i, blkaddr * BYTES_PER_BLOCK,
-                                      false, false);
+        if (off + len > BYTES_PER_BLOCK)
+                return -E2BIG;
+
+        target = numbfs_inode_blkaddr(inode_i, offset, false, false);
         if (target < 0 && target != NUMBFS_HOLE)
                 return target;
 
         /* read a hole */
-        if (round_up(inode_i->size, BYTES_PER_BLOCK) < blkaddr * BYTES_PER_BLOCK ||
-            target == NUMBFS_HOLE) {
-                memset(buf, 0, BYTES_PER_BLOCK);
+        if (offset >= inode_i->size || target == NUMBFS_HOLE) {
+                memset(buf, len, BYTES_PER_BLOCK);
                 return 0;
         }
 
-        return numbfs_read_block(inode_i->sbi, buf, target);
+        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        if (err)
+                return err;
+
+        memcpy(buf, tmp + off, len);
+        return 0;
 }
 
 /* get a empty inode */
@@ -336,7 +362,7 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         char buf[BYTES_PER_BLOCK];
         struct numbfs_inode_info *inode_i;
         struct numbfs_dirent *dir;
-        int err, i;
+        int err, i, size = 0;
 
         err = numbfs_alloc_inode(sbi, nid);
         if (err)
@@ -364,6 +390,7 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         dir->name_len = 2;
         dir->ino = cpu_to_le16(pnid);
         dir->type = DT_DIR;
+        size += sizeof(struct numbfs_dirent);
 
         dir++;
         memcpy(dir->name, ".", 1);
@@ -371,7 +398,7 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         dir->name_len = 1;
         dir->ino = cpu_to_le16(*nid);
         dir->type = DT_DIR;
-
+        size += sizeof(struct numbfs_dirent);
 
         /* make an extra lost+found dir for root inode */
         if (pnid == *nid) {
@@ -394,20 +421,20 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
                 dir->name_len = strlen(NUMBFS_LOSTFOUND);
                 dir->type = DT_DIR;
                 dir->ino = cpu_to_le16(child_nid);
+                size += sizeof(struct numbfs_dirent);
         }
-
-        err = numbfs_pwrite_inode(inode_i, buf, 0);
-        if (err)
-                goto exit;
 
         /* update metadata */
         inode_i->mode = S_IFDIR | 0755;
         inode_i->nlink = 2;
         inode_i->uid = (__uint16_t)getuid();
         inode_i->gid = (__uint16_t)getgid();
-        inode_i->size = pnid == *nid ? sizeof(struct numbfs_dirent) * 3 :
-                                      sizeof(struct numbfs_dirent) * 2;
-        err = numbfs_dump_inode(inode_i);
+        inode_i->size = size;
+
+        err = numbfs_pwrite_inode(inode_i, buf, 0, size);
+        if (err)
+                goto exit;
+
 exit:
         free(inode_i);
         return err;
