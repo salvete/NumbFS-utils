@@ -114,6 +114,28 @@ static void test_hole(void)
 #undef TEST_BLK
 }
 
+static void test_byte_rw(void)
+{
+        struct numbfs_inode_info inode;
+        char rbuf[BYTES_PER_BLOCK], wbuf[BYTES_PER_BLOCK];
+        int i;
+#define TEST_BLK 6
+
+        inode.sbi = &sbi;
+        inode.nid = TEST_NUM_INODES / 2;
+
+        memset(wbuf, 0, BYTES_PER_BLOCK);
+        memset(rbuf, 0, BYTES_PER_BLOCK);
+        assert(!numbfs_get_inode(&sbi, &inode));
+        for (i = 0; i < BYTES_PER_BLOCK / 4; i++)
+                wbuf[i] = 0x73;
+
+        assert(!numbfs_pwrite_inode(&inode, wbuf, TEST_BLK * BYTES_PER_BLOCK + TEST_BLK / 4, BYTES_PER_BLOCK / 4));
+        assert(!numbfs_pread_inode(&inode, rbuf, TEST_BLK * BYTES_PER_BLOCK + TEST_BLK / 4, (BYTES_PER_BLOCK / 4) * 3));
+        assert(!memcmp(rbuf, wbuf, BYTES_PER_BLOCK));
+#undef TEST_BLK
+}
+
 static int numbfs_block_count(void)
 {
         int cnt = 0, i, byte, bit;
@@ -208,6 +230,7 @@ int main() {
 
         /* do tests */
         test_hole();
+        test_byte_rw();
         test_block_management();
         test_inode_management();
 
