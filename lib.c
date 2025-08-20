@@ -61,7 +61,8 @@ int numbfs_get_superblock(struct numbfs_superblock_info *sbi, int fd)
         sbi->inode_start        = le32_to_cpu(sb->s_inode_start);
         sbi->bbitmap_start      = le32_to_cpu(sb->s_bbitmap_start);
         sbi->data_start         = le32_to_cpu(sb->s_data_start);
-        sbi->num_inodes         = le32_to_cpu(sb->s_num_inodes);
+        sbi->total_inodes       = le32_to_cpu(sb->s_total_inodes);
+        sbi->free_inodes        = le32_to_cpu(sb->s_free_inodes);
         sbi->data_blocks        = le32_to_cpu(sb->s_data_blocks);
         sbi->free_blocks        = le32_to_cpu(sb->s_free_blocks);
         sbi->feature            = le32_to_cpu(sb->s_feature);
@@ -265,13 +266,16 @@ int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
 }
 
 /* get a empty inode */
-int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
+int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid)
 {
-        int ret, i, err, byte, bit;
+        int i, err, byte, bit;
         char buf[BYTES_PER_BLOCK];
 
-        ret = -1;
-        for (i = 0; i < sbi->num_inodes; i++) {
+        if (!sbi->free_inodes)
+                return -ENOMEM;
+
+        err = -ENOENT;
+        for (i = 0; i < sbi->total_inodes; i++) {
                 /* read a new block */
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
                         err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, i));
@@ -279,13 +283,14 @@ int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
                                 return err;
                 }
 
-                if (i <= NUMBFS_ROOT_NID)
+                if (i < NUMBFS_ROOT_NID)
                         continue;
 
                 byte = numbfs_bmap_byte(i);
                 bit = numbfs_bmap_bit(i);
                 if (!(buf[byte] & (1 << bit))) {
-                        ret = i;
+                        *nid = i;
+                        err = 0;
                         /* set this bit to 1 */
                         buf[byte] |= (1 << bit);
                         err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, i));
@@ -296,23 +301,52 @@ int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
 
         }
 
-        return ret;
+        if (!err)
+                sbi->free_inodes--;
+        return err;
 }
 
-/* make a empty dir */
+int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid)
+{
+        int err, byte, bit;
+        char buf[BYTES_PER_BLOCK];
+
+        if (nid < NUMBFS_ROOT_NID || nid >= sbi->total_inodes)
+                return 0;
+
+        err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, nid));
+        if (err)
+                return err;
+
+        byte = numbfs_bmap_byte(nid);
+        bit = numbfs_bmap_bit(nid);
+        BUG_ON(!(buf[byte] & (1 << bit)));
+        buf[byte] &= ~(1 << bit);
+        err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, nid));
+        if (err)
+                return err;
+        sbi->free_inodes++;
+        return 0;
+}
+
+/* make a empty dir, nid stored in @nid */
 int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
-                     int pnid, int nid)
+                     int pnid, int *nid)
 {
         char buf[BYTES_PER_BLOCK];
         struct numbfs_inode_info *inode_i;
         struct numbfs_dirent *dir;
         int err, i;
 
+        err = numbfs_alloc_inode(sbi, nid);
+        if (err)
+                return err;
+
         inode_i = malloc(sizeof(*inode_i));
         if (!inode_i)
                 return -ENOMEM;
 
-        inode_i->nid = nid;
+        inode_i->nid = *nid;
         inode_i->sbi = sbi;
         err = numbfs_get_inode(sbi, inode_i);
         if (err)
@@ -335,24 +369,24 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         memcpy(dir->name, ".", 1);
         dir->name[1] = '\0';
         dir->name_len = 1;
-        dir->ino = cpu_to_le16(nid);
+        dir->ino = cpu_to_le16(*nid);
         dir->type = DT_DIR;
 
 
         /* make an extra lost+found dir for root inode */
-        if (pnid == nid) {
+        if (pnid == *nid) {
 #define NUMBFS_LOSTFOUND        "lost+found"
-                int child_nid = numbfs_alloc_inode(sbi);
+                int child_nid;
+
+                /* make a child dir */
+                err = numbfs_empty_dir(sbi, *nid, &child_nid);
+                if (err)
+                        goto exit;
 
                 if (child_nid <= NUMBFS_ROOT_NID) {
                         err = -ENOMEM;
                         goto exit;
                 }
-
-                /* make a child dir */
-                err = numbfs_empty_dir(sbi, nid, child_nid);
-                if (err)
-                        goto exit;
 
                 dir++;
                 memcpy(dir->name, NUMBFS_LOSTFOUND, strlen(NUMBFS_LOSTFOUND));
@@ -371,7 +405,7 @@ int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
         inode_i->nlink = 2;
         inode_i->uid = (__uint16_t)getuid();
         inode_i->gid = (__uint16_t)getgid();
-        inode_i->size = pnid == nid ? sizeof(struct numbfs_dirent) * 3 :
+        inode_i->size = pnid == *nid ? sizeof(struct numbfs_dirent) * 3 :
                                       sizeof(struct numbfs_dirent) * 2;
         err = numbfs_dump_inode(inode_i);
 exit:

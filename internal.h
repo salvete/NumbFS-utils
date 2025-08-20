@@ -12,7 +12,8 @@
 struct numbfs_superblock_info {
         int fd;
         int feature;
-        int num_inodes;
+        int total_inodes;
+        int free_inodes;
         int data_blocks;
         int free_blocks;
         int ibitmap_start;
@@ -108,10 +109,11 @@ int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
 int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
                        char buf[BYTES_PER_BLOCK], int blkaddr);
 
-int numbfs_alloc_inode(struct numbfs_superblock_info *sbi);
+int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid);
+int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid);
 
 /* make an empty dir */
 int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
-                     int pnid, int nid);
+                     int pnid, int *nid);
 
 #endif

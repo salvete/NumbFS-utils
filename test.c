@@ -8,7 +8,7 @@
 #include <string.h>
 
 #define FILE_SIZE (10 * 1024 * 1024) // 10MB
-#define TEST_NUM_INODES 1024
+#define TEST_NUM_INODES 4096
 
 struct numbfs_superblock_info sbi;
 
@@ -24,16 +24,17 @@ static void init_sbi(int fd)
 
         total_blocks = sbi.size / BYTES_PER_BLOCK;
 
-        sbi.num_inodes = TEST_NUM_INODES;
+        sbi.total_inodes = TEST_NUM_INODES;
+        sbi.free_inodes = sbi.total_inodes - NUMBFS_ROOT_NID;
 
         /* inode bitmap start block addr */
         sbi.ibitmap_start = 2;
         /* inodes start block add */
         sbi.inode_start = sbi.ibitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.num_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.total_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
         /* block bitmap start block addr */
         sbi.bbitmap_start = sbi.inode_start +
-                        DIV_ROUND_UP(sbi.num_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(sbi.total_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
 
         remain = total_blocks - sbi.bbitmap_start - 1;
         /* nr free data blocks */
@@ -147,10 +148,53 @@ static void test_block_management(void)
                 assert(sbi.free_blocks == free_blocks);
         }
 
-        for (int i = 0; i < TEST_TIMES; i++) {
+        for (i = 0; i < TEST_TIMES; i++) {
                 assert(!numbfs_free_block(&sbi, blks[i]));
                 assert(total_blocks - numbfs_block_count() == TEST_TIMES - i - 1);
         }
+}
+
+static int numbfs_inode_count(void)
+{
+        int cnt = 0, i, byte, bit;
+        char buf[BYTES_PER_BLOCK];
+
+        for (i = 0; i < sbi.total_inodes; i++) {
+                if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
+                        assert(!numbfs_read_block(&sbi, buf, numbfs_imap_blk(&sbi, i)));
+                if (i < NUMBFS_ROOT_NID)
+                        continue;
+                byte = numbfs_imap_byte(i);
+                bit = numbfs_imap_bit(i);
+                if (!(buf[byte] & (1 << bit)))
+                        cnt++;
+        }
+        return cnt;
+}
+
+
+static void test_inode_management(void)
+{
+        int total_inodes = numbfs_inode_count();
+        int inodes[TEST_TIMES];
+        int i;
+
+        assert(sbi.free_inodes == total_inodes);
+
+        for (i = 0; i < TEST_TIMES; i++) {
+                int free_inodes;
+
+                assert(!numbfs_alloc_inode(&sbi, &inodes[i]));
+                free_inodes = numbfs_inode_count();
+                assert(total_inodes - free_inodes == i + 1);
+                assert(sbi.free_inodes == free_inodes);
+        }
+
+        for (i = 0; i < TEST_TIMES; i++) {
+                assert(!numbfs_free_inode(&sbi, inodes[i]));
+                assert(total_inodes - numbfs_inode_count() == TEST_TIMES - i - 1);
+        }
+
 }
 
 int main() {
@@ -165,6 +209,7 @@ int main() {
         /* do tests */
         test_hole();
         test_block_management();
+        test_inode_management();
 
         close(fd);
         assert(remove(filename) == 0);
