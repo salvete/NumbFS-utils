@@ -8,7 +8,7 @@
 #include <string.h>
 
 #define FILE_SIZE (10 * 1024 * 1024) // 10MB
-#define TEST_NUM_INODES 1024
+#define TEST_NUM_INODES 4096
 
 struct numbfs_superblock_info sbi;
 
@@ -24,25 +24,27 @@ static void init_sbi(int fd)
 
         total_blocks = sbi.size / BYTES_PER_BLOCK;
 
-        sbi.num_inodes = TEST_NUM_INODES;
+        sbi.total_inodes = TEST_NUM_INODES;
+        sbi.free_inodes = sbi.total_inodes - NUMBFS_ROOT_NID;
 
         /* inode bitmap start block addr */
         sbi.ibitmap_start = 2;
         /* inodes start block add */
         sbi.inode_start = sbi.ibitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.num_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.total_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
         /* block bitmap start block addr */
         sbi.bbitmap_start = sbi.inode_start +
-                        DIV_ROUND_UP(sbi.num_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(sbi.total_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
 
         remain = total_blocks - sbi.bbitmap_start - 1;
         /* nr free data blocks */
-        sbi.nfree_blocks = remain -
+        sbi.data_blocks = remain -
                         DIV_ROUND_UP(DIV_ROUND_UP(remain, BITS_PER_BYTE), BYTES_PER_BLOCK);
+        sbi.free_blocks = sbi.data_blocks;
 
         start = 2;
         end = sbi.bbitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.nfree_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.data_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
         memset(buf, 0, sizeof(buf));
         /* clear all the bits in range [start, end] */
         for (i = start; i < end; i++) {
@@ -93,22 +95,44 @@ static void test_hole(void)
 
         assert(!numbfs_get_inode(&sbi, &inode_i));
 
-        assert(!numbfs_pwrite_inode(&inode_i, wcontent, TEST_BLK));
+        assert(!numbfs_pwrite_inode(&inode_i, wcontent, TEST_BLK * BYTES_PER_BLOCK, BYTES_PER_BLOCK));
         for (i = 0; i < TEST_BLK; i++) {
-                assert(!numbfs_pread_inode(&inode_i, rcontent, i));
+                assert(!numbfs_pread_inode(&inode_i, rcontent, i * BYTES_PER_BLOCK, BYTES_PER_BLOCK));
                 /* should be zero, since these blocks are all holes */
                 assert(!memcmp(rcontent, zero, BYTES_PER_BLOCK));
         }
 
-        assert(!numbfs_pread_inode(&inode_i, rcontent, TEST_BLK));
+        assert(!numbfs_pread_inode(&inode_i, rcontent, TEST_BLK * BYTES_PER_BLOCK, BYTES_PER_BLOCK));
         assert(!memcmp(rcontent, wcontent, BYTES_PER_BLOCK));
 
         /* write the middle block */
-        assert(!numbfs_pwrite_inode(&inode_i, wcontent, TEST_BLK / 2));
-        assert(!numbfs_pread_inode(&inode_i, rcontent, TEST_BLK / 2));
+        assert(!numbfs_pwrite_inode(&inode_i, wcontent, (TEST_BLK / 2) * BYTES_PER_BLOCK, BYTES_PER_BLOCK));
+        assert(!numbfs_pread_inode(&inode_i, rcontent, (TEST_BLK / 2) * BYTES_PER_BLOCK, BYTES_PER_BLOCK));
         assert(!memcmp(wcontent, rcontent, BYTES_PER_BLOCK));
 
 #undef TEST_NID
+#undef TEST_BLK
+}
+
+static void test_byte_rw(void)
+{
+        struct numbfs_inode_info inode;
+        char rbuf[BYTES_PER_BLOCK], wbuf[BYTES_PER_BLOCK];
+        int i;
+#define TEST_BLK 6
+
+        inode.sbi = &sbi;
+        inode.nid = TEST_NUM_INODES / 2;
+
+        memset(wbuf, 0, BYTES_PER_BLOCK);
+        memset(rbuf, 0, BYTES_PER_BLOCK);
+        assert(!numbfs_get_inode(&sbi, &inode));
+        for (i = 0; i < BYTES_PER_BLOCK / 4; i++)
+                wbuf[i] = 0x73;
+
+        assert(!numbfs_pwrite_inode(&inode, wbuf, TEST_BLK * BYTES_PER_BLOCK + TEST_BLK / 4, BYTES_PER_BLOCK / 4));
+        assert(!numbfs_pread_inode(&inode, rbuf, TEST_BLK * BYTES_PER_BLOCK + TEST_BLK / 4, (BYTES_PER_BLOCK / 4) * 3));
+        assert(!memcmp(rbuf, wbuf, BYTES_PER_BLOCK));
 #undef TEST_BLK
 }
 
@@ -117,7 +141,7 @@ static int numbfs_block_count(void)
         int cnt = 0, i, byte, bit;
         char buf[BYTES_PER_BLOCK];
 
-        for (i = 0; i < sbi.nfree_blocks; i++) {
+        for (i = 0; i < sbi.data_blocks; i++) {
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
                         assert(!numbfs_read_block(&sbi, buf, numbfs_bmap_blk(&sbi, i)));
                 byte = numbfs_bmap_byte(i);
@@ -135,15 +159,64 @@ static void test_block_management(void)
         int blks[TEST_TIMES];
         int i;
 
+        assert(sbi.free_blocks == total_blocks);
+
         for (i = 0; i < TEST_TIMES; i++) {
+                int free_blocks;
+
                 blks[i] = numbfs_alloc_block(&sbi);
-                assert(total_blocks - numbfs_block_count() == i + 1);
+                free_blocks = numbfs_block_count();
+                assert(total_blocks - free_blocks == i + 1);
+                assert(sbi.free_blocks == free_blocks);
         }
 
-        for (int i = 0; i < TEST_TIMES; i++) {
+        for (i = 0; i < TEST_TIMES; i++) {
                 assert(!numbfs_free_block(&sbi, blks[i]));
                 assert(total_blocks - numbfs_block_count() == TEST_TIMES - i - 1);
         }
+}
+
+static int numbfs_inode_count(void)
+{
+        int cnt = 0, i, byte, bit;
+        char buf[BYTES_PER_BLOCK];
+
+        for (i = 0; i < sbi.total_inodes; i++) {
+                if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
+                        assert(!numbfs_read_block(&sbi, buf, numbfs_imap_blk(&sbi, i)));
+                if (i < NUMBFS_ROOT_NID)
+                        continue;
+                byte = numbfs_imap_byte(i);
+                bit = numbfs_imap_bit(i);
+                if (!(buf[byte] & (1 << bit)))
+                        cnt++;
+        }
+        return cnt;
+}
+
+
+static void test_inode_management(void)
+{
+        int total_inodes = numbfs_inode_count();
+        int inodes[TEST_TIMES];
+        int i;
+
+        assert(sbi.free_inodes == total_inodes);
+
+        for (i = 0; i < TEST_TIMES; i++) {
+                int free_inodes;
+
+                assert(!numbfs_alloc_inode(&sbi, &inodes[i]));
+                free_inodes = numbfs_inode_count();
+                assert(total_inodes - free_inodes == i + 1);
+                assert(sbi.free_inodes == free_inodes);
+        }
+
+        for (i = 0; i < TEST_TIMES; i++) {
+                assert(!numbfs_free_inode(&sbi, inodes[i]));
+                assert(total_inodes - numbfs_inode_count() == TEST_TIMES - i - 1);
+        }
+
 }
 
 int main() {
@@ -157,7 +230,9 @@ int main() {
 
         /* do tests */
         test_hole();
+        test_byte_rw();
         test_block_management();
+        test_inode_management();
 
         close(fd);
         assert(remove(filename) == 0);

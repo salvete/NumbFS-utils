@@ -46,7 +46,7 @@ static void numbfs_show_config(void)
 {
         printf(
                 "All configs:\n"
-                "    num_inodes: %d\n", sbi.num_inodes
+                "    num_inodes: %d\n", sbi.total_inodes
         );
 }
 #endif
@@ -88,7 +88,8 @@ static int numbfs_parse_args(int argc, char **argv)
                                         fprintf(stderr, "Error: invalid num_inodes: %d, should be positive and multiple of 8\n", val);
                                         return -EINVAL;
                                 }
-                                sbi.num_inodes = val;
+                                sbi.total_inodes = val;
+                                sbi.free_inodes = sbi.total_inodes - NUMBFS_ROOT_NID;
                                 break;
                         case 's':
                                 if (sscanf(optarg, "%lld%c", &size, &unit) < 1)  {
@@ -130,8 +131,43 @@ static int numbfs_parse_args(int argc, char **argv)
 static void numbfs_init_config(void)
 {
         sbi.fd = -1;
-        sbi.num_inodes = NUMBFS_DEFAULT_INODES;
+        sbi.total_inodes = NUMBFS_DEFAULT_INODES;
+        sbi.free_inodes = sbi.total_inodes - NUMBFS_ROOT_NID;
         sbi.size = -1;
+}
+
+static int numbfs_mkdir_lostfound(void)
+{
+#define LOSTFOUND       "lost+found"
+#define LOSTFOUNDLEN    strlen(LOSTFOUND)
+        struct numbfs_inode_info ni;
+        struct numbfs_dirent *dir;
+        char buf[BYTES_PER_BLOCK];
+        int nid;
+        int err;
+
+        nid = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID);
+        if (nid <= NUMBFS_ROOT_NID)
+                return -EINVAL;
+
+        ni.sbi = &sbi;
+        ni.nid = NUMBFS_ROOT_NID;
+        err = numbfs_get_inode(&sbi, &ni);
+        if (err)
+                return err;
+
+        dir = (struct numbfs_dirent*)buf;
+        memcpy(dir->name, LOSTFOUND, LOSTFOUNDLEN);
+        dir->name[LOSTFOUNDLEN] = '\0';
+        dir->name_len = LOSTFOUNDLEN;
+        dir->ino = nid;
+        dir->type = DT_DIR;
+        err = numbfs_pwrite_inode(&ni, buf, ni.size, sizeof(*dir));
+        if (err)
+                return err;
+#undef  LOSTFOUND
+#undef  LOSTFOUNDLEN
+        return 0;
 }
 
 /*
@@ -180,9 +216,9 @@ static int numbfs_mkfs(void)
                 }
         }
 
-        if (sbi.size <=  2 * BYTES_PER_BLOCK + round_up(sbi.num_inodes * 64, BYTES_PER_BLOCK) + 3) {
+        if (sbi.size <=  2 * BYTES_PER_BLOCK + round_up(sbi.total_inodes * 64, BYTES_PER_BLOCK) + 3) {
                 fprintf(stderr, "device too small, should be at least %d Bytes\n",
-                                2 * BYTES_PER_BLOCK + round_up(sbi.num_inodes * 64, BYTES_PER_BLOCK) + 3);
+                                2 * BYTES_PER_BLOCK + round_up(sbi.total_inodes * 64, BYTES_PER_BLOCK) + 3);
                 close(sbi.fd);
                 return -EINVAL;
         }
@@ -193,19 +229,20 @@ static int numbfs_mkfs(void)
         sbi.ibitmap_start = 2;
         /* inodes start block add */
         sbi.inode_start = sbi.ibitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.num_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.total_inodes, BITS_PER_BYTE), BYTES_PER_BLOCK);
         /* block bitmap start block addr */
         sbi.bbitmap_start = sbi.inode_start +
-                        DIV_ROUND_UP(sbi.num_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(sbi.total_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
 
         remain = total_blocks - sbi.bbitmap_start - 1;
-        /* nr free data blocks */
-        sbi.nfree_blocks = remain -
+        /* nr total data blocks */
+        sbi.data_blocks = remain -
                         DIV_ROUND_UP(DIV_ROUND_UP(remain, BITS_PER_BYTE), BYTES_PER_BLOCK);
+        sbi.free_blocks = sbi.data_blocks;
 
         start = 2;
         end = sbi.bbitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.nfree_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.data_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
         memset(buf, 0, sizeof(buf));
         /* clear all the bits in range [start, end] */
         for (i = start; i < end; i++) {
@@ -241,19 +278,23 @@ static int numbfs_mkfs(void)
 
 #ifdef HAVE_NUMBFS_DEBUG
         printf("Superblock information:\n");
-        printf("    num_inodes: %d\n", sbi.num_inodes);
+        printf("    num_inodes: %d\n", sbi.total_inodes);
         printf("    ibitmap_start: %d\n", sbi.ibitmap_start);
         printf("    inodes_start: %d\n", sbi.inode_start);
         printf("    bbitmap_start: %d\n", sbi.bbitmap_start);
-        printf("    num_free_blocks: %d\n", sbi.nfree_blocks);
+        printf("    num_free_blocks: %d\n", sbi.free_blocks);
 #endif
 
         /* create the root inode */
-        err = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID, NUMBFS_ROOT_NID);
-        if (err) {
+        err = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID);
+        if (err != NUMBFS_ROOT_NID) {
                 fprintf(stderr, "failed to prepare root inode, err: %d\n", err);
                 return err;
         }
+
+        err = numbfs_mkdir_lostfound();
+        if (err)
+                return err;
 
         memset(buf, 0, BYTES_PER_BLOCK);
         sb = (struct numbfs_super_block*)buf;
@@ -263,8 +304,10 @@ static int numbfs_mkfs(void)
         sb->s_inode_start = cpu_to_le32(sbi.inode_start);
         sb->s_bbitmap_start = cpu_to_le32(sbi.bbitmap_start);
         sb->s_data_start = cpu_to_le32(sbi.data_start);
-        sb->s_num_inodes = cpu_to_le32(sbi.num_inodes);
-        sb->s_nfree_blocks = cpu_to_le32(sbi.nfree_blocks);
+        sb->s_total_inodes = cpu_to_le32(sbi.total_inodes);
+        sb->s_free_inodes = cpu_to_le32(sbi.free_inodes);
+        sb->s_data_blocks = cpu_to_le32(sbi.data_blocks);
+        sb->s_free_blocks = cpu_to_le32(sbi.free_blocks);
 
         return numbfs_write_block(&sbi, buf, NUMBFS_SUPER_OFFSET / BYTES_PER_BLOCK);
 }

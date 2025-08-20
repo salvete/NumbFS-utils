@@ -139,7 +139,7 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                 printf("    DIR CONTENT\n");
                 for (i = 0; i < inode_i->size; i += sizeof(struct numbfs_dirent)) {
                         if (i % BYTES_PER_BLOCK == 0) {
-                                err = numbfs_pread_inode(inode_i, buf, i / BYTES_PER_BLOCK);
+                                err = numbfs_pread_inode(inode_i, buf, i, BYTES_PER_BLOCK);
                                 if (err) {
                                         fprintf(stderr, "error: failed to read block@%d of inode@%d\n",
                                                 i / BYTES_PER_BLOCK, nid);
@@ -185,8 +185,10 @@ static int numbfs_fsck(int argc, char **argv)
         printf("    inode zone start:           %d\n", sbi.inode_start);
         printf("    block bitmap start:         %d\n", sbi.bbitmap_start);
         printf("    data zone start:            %d\n", sbi.data_start);
-        printf("    total inodes:               %d\n", sbi.num_inodes);
-        printf("    total free data blocks:     %d\n", sbi.nfree_blocks);
+        printf("    free inodes:                %d\n", sbi.free_inodes);
+        printf("    total inodes:               %d\n", sbi.total_inodes);
+        printf("    total free blocks:          %d\n", sbi.free_blocks);
+        printf("    total data blocks:          %d\n", sbi.data_blocks);
 
         if (cfg.show_inodes) {
                 cnt = 0;
@@ -200,7 +202,8 @@ static int numbfs_fsck(int argc, char **argv)
 
                         cnt += numbfs_fsck_used(buf);
                 }
-                printf("    inodes usage:               %.2f%%\n", 100.0 * cnt / sbi.num_inodes);
+                BUG_ON(cnt != sbi.total_inodes - sbi.free_inodes);
+                printf("    inodes usage:               %.2f%%\n", 100.0 * cnt / sbi.total_inodes);
         }
 
         if (cfg.show_blocks) {
@@ -215,7 +218,8 @@ static int numbfs_fsck(int argc, char **argv)
 
                         cnt += numbfs_fsck_used(buf);
                 }
-                printf("    blocks usage:               %.2f%%\n", 100.0 * cnt / sbi.nfree_blocks);
+                BUG_ON(cnt != sbi.data_blocks - sbi.free_blocks);
+                printf("    blocks usage:               %.2f%%\n", 100.0 * cnt / sbi.data_blocks);
         }
 
         if (cfg.nid > 0) {

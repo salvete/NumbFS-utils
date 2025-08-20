@@ -12,6 +12,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#define DOT             "."
+#define DOTDOT          ".."
+#define DOTLEN          strlen(DOT)
+#define DOTDOTLEN       strlen(DOTDOT)
+
 int numbfs_read_block(struct numbfs_superblock_info *sbi,
                       char buf[BYTES_PER_BLOCK], int blkno)
 {
@@ -61,8 +66,10 @@ int numbfs_get_superblock(struct numbfs_superblock_info *sbi, int fd)
         sbi->inode_start        = le32_to_cpu(sb->s_inode_start);
         sbi->bbitmap_start      = le32_to_cpu(sb->s_bbitmap_start);
         sbi->data_start         = le32_to_cpu(sb->s_data_start);
-        sbi->num_inodes         = le32_to_cpu(sb->s_num_inodes);
-        sbi->nfree_blocks       = le32_to_cpu(sb->s_nfree_blocks);
+        sbi->total_inodes       = le32_to_cpu(sb->s_total_inodes);
+        sbi->free_inodes        = le32_to_cpu(sb->s_free_inodes);
+        sbi->data_blocks        = le32_to_cpu(sb->s_data_blocks);
+        sbi->free_blocks        = le32_to_cpu(sb->s_free_blocks);
         sbi->feature            = le32_to_cpu(sb->s_feature);
         return 0;
 }
@@ -74,7 +81,7 @@ int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
         char buf[BYTES_PER_BLOCK];
 
         ret = -1;
-        for (i = 0; i < sbi->nfree_blocks; i++) {
+        for (i = 0; i < sbi->data_blocks; i++) {
                 /* read a new block */
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
                         err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(sbi, i));
@@ -95,6 +102,7 @@ int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
                 }
 
         }
+        sbi->free_blocks--;
         return ret + sbi->data_start;
 }
 
@@ -115,6 +123,7 @@ int numbfs_free_block(struct numbfs_superblock_info *sbi, int blkno)
         buf[byte] &= ~(1 << bit);
 
         err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(sbi, blkno));
+        sbi->free_blocks++;
         return err;
 }
 
@@ -149,7 +158,7 @@ int numbfs_get_inode(struct numbfs_superblock_info *sbi,
  */
 int numbfs_inode_blkaddr(struct numbfs_inode_info *inode, int pos, bool alloc, bool extent)
 {
-        int blkno;
+        int blkno, err;
 
         if (extent) {
                 fprintf(stderr, "error: extent feature currently is not supported!\n");
@@ -162,11 +171,19 @@ int numbfs_inode_blkaddr(struct numbfs_inode_info *inode, int pos, bool alloc, b
         }
 
         if (alloc && inode->data[pos / BYTES_PER_BLOCK] == NUMBFS_HOLE) {
+                char buf[BYTES_PER_BLOCK];
+
                 blkno = numbfs_alloc_block(inode->sbi);
                 if (blkno < 0) {
                         fprintf(stderr, "failed to alloc data block\n");
                         return blkno;
                 }
+
+                memset(buf, 0, BYTES_PER_BLOCK);
+                err = numbfs_write_block(inode->sbi, buf, blkno);
+                if (err)
+                        return err;
+
                 inode->data[pos / BYTES_PER_BLOCK] = blkno;
         }
 
@@ -219,21 +236,39 @@ static int numbfs_dump_inode(struct numbfs_inode_info *inode_i)
         return 0;
 }
 
-/* write the buffer to the blkaddr-th block in the address space */
+/**
+ * write the buffer to the blkaddr-th block in the address space
+ * @buf: the content
+ * @offset: the position in the file's address space
+ * @len: write length
+ *
+ * Note that this helper does not support cross-block write
+ */
 int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
-                        char buf[BYTES_PER_BLOCK], int blkaddr)
+                        char buf[BYTES_PER_BLOCK], int offset, int len)
 {
         int target, err;
+        char tmp[BYTES_PER_BLOCK];
+        int off = offset % BYTES_PER_BLOCK;
+
+        if (off + len > BYTES_PER_BLOCK)
+                return -E2BIG;
 
         /* extend the inode size with holes */
-        inode_i->size = max(inode_i->size, (blkaddr + 1) * BYTES_PER_BLOCK);
+        inode_i->size = max(inode_i->size, offset + len);
 
-        target = numbfs_inode_blkaddr(inode_i, blkaddr * BYTES_PER_BLOCK,
+        target = numbfs_inode_blkaddr(inode_i, offset,
                                       true, false);
         if (target < 0)
                 return target;
 
-        err = numbfs_write_block(inode_i->sbi, buf, target);
+        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        if (err)
+                return err;
+
+        memcpy(tmp + off, buf, len);
+
+        err = numbfs_write_block(inode_i->sbi, tmp, target);
         if (err)
                 return err;
 
@@ -242,33 +277,44 @@ int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
 
 /* read the blkaddr-th block in the address space */
 int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
-                       char buf[BYTES_PER_BLOCK], int blkaddr)
+                       char buf[BYTES_PER_BLOCK], int offset, int len)
 {
-        int target;
+        int target, err;
+        char tmp[BYTES_PER_BLOCK];
+        int off = offset % BYTES_PER_BLOCK;
 
-        target = numbfs_inode_blkaddr(inode_i, blkaddr * BYTES_PER_BLOCK,
-                                      false, false);
+        if (off + len > BYTES_PER_BLOCK)
+                return -E2BIG;
+
+        target = numbfs_inode_blkaddr(inode_i, offset, false, false);
         if (target < 0 && target != NUMBFS_HOLE)
                 return target;
 
         /* read a hole */
-        if (round_up(inode_i->size, BYTES_PER_BLOCK) < blkaddr * BYTES_PER_BLOCK ||
-            target == NUMBFS_HOLE) {
-                memset(buf, 0, BYTES_PER_BLOCK);
+        if (offset >= inode_i->size || target == NUMBFS_HOLE) {
+                memset(buf, len, BYTES_PER_BLOCK);
                 return 0;
         }
 
-        return numbfs_read_block(inode_i->sbi, buf, target);
+        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        if (err)
+                return err;
+
+        memcpy(buf, tmp + off, len);
+        return 0;
 }
 
 /* get a empty inode */
-int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
+int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid)
 {
-        int ret, i, err, byte, bit;
+        int i, err, byte, bit;
         char buf[BYTES_PER_BLOCK];
 
-        ret = -1;
-        for (i = 0; i < sbi->num_inodes; i++) {
+        if (!sbi->free_inodes)
+                return -ENOMEM;
+
+        err = -ENOENT;
+        for (i = 0; i < sbi->total_inodes; i++) {
                 /* read a new block */
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
                         err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, i));
@@ -276,13 +322,14 @@ int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
                                 return err;
                 }
 
-                if (i <= NUMBFS_ROOT_NID)
+                if (i < NUMBFS_ROOT_NID)
                         continue;
 
                 byte = numbfs_bmap_byte(i);
                 bit = numbfs_bmap_bit(i);
                 if (!(buf[byte] & (1 << bit))) {
-                        ret = i;
+                        *nid = i;
+                        err = 0;
                         /* set this bit to 1 */
                         buf[byte] |= (1 << bit);
                         err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, i));
@@ -293,85 +340,73 @@ int numbfs_alloc_inode(struct numbfs_superblock_info *sbi)
 
         }
 
-        return ret;
+        if (!err)
+                sbi->free_inodes--;
+        return err;
 }
 
-/* make a empty dir */
-int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
-                     int pnid, int nid)
+int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid)
 {
+        int err, byte, bit;
         char buf[BYTES_PER_BLOCK];
-        struct numbfs_inode_info *inode_i;
-        struct numbfs_dirent *dir;
-        int err, i;
 
-        inode_i = malloc(sizeof(*inode_i));
-        if (!inode_i)
-                return -ENOMEM;
+        if (nid < NUMBFS_ROOT_NID || nid >= sbi->total_inodes)
+                return 0;
 
-        inode_i->nid = nid;
-        inode_i->sbi = sbi;
-        err = numbfs_get_inode(sbi, inode_i);
+        err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, nid));
         if (err)
-                goto exit;
+                return err;
 
-        /* sanity check */
+        byte = numbfs_bmap_byte(nid);
+        bit = numbfs_bmap_bit(nid);
+        BUG_ON(!(buf[byte] & (1 << bit)));
+        buf[byte] &= ~(1 << bit);
+        err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, nid));
+        if (err)
+                return err;
+        sbi->free_inodes++;
+        return 0;
+}
+
+int numbfs_empty_dir(struct numbfs_superblock_info *sbi, int pnid)
+{
+        struct numbfs_inode_info inode;
+        struct numbfs_dirent *dir;
+        char buf[BYTES_PER_BLOCK];
+        int nid, err, i;
+
+        err = numbfs_alloc_inode(sbi, &nid);
+        if (err)
+                return err;
+
+        inode.nid = nid;
+        inode.sbi = sbi;
+        inode.mode = S_IFDIR | 0755;
+        inode.nlink = 2;
+        inode.uid = (__uint16_t)getuid();
+        inode.gid = (__uint16_t)getgid();
+        inode.size = 0;
         for (i = 0; i < NUMBFS_NUM_DATA_ENTRY; i++)
-                BUG_ON(inode_i->data[i] != NUMBFS_HOLE);
+                inode.data[i] = NUMBFS_HOLE;
 
-        /* write data block */
-        memset(buf, 0, BYTES_PER_BLOCK);
         dir = (struct numbfs_dirent*)buf;
-        memcpy(dir->name, "..", 2);
-        dir->name[2] = '\0';
-        dir->name_len = 2;
-        dir->ino = cpu_to_le16(pnid);
-        dir->type = DT_DIR;
-
-        dir++;
-        memcpy(dir->name, ".", 1);
-        dir->name[1] = '\0';
-        dir->name_len = 1;
+        memcpy(dir->name, DOT, DOTLEN);
+        dir->name[DOTLEN] = '\0';
+        dir->name_len = DOTLEN;
         dir->ino = cpu_to_le16(nid);
         dir->type = DT_DIR;
+        inode.size += sizeof(struct numbfs_dirent);
 
+        dir++;
+        memcpy(dir->name, DOTDOT, DOTDOTLEN);
+        dir->name[DOTDOTLEN] = '\0';
+        dir->name_len = DOTDOTLEN;
+        dir->ino = cpu_to_le16(pnid);
+        dir->type = DT_DIR;
+        inode.size += sizeof(struct numbfs_dirent);
 
-        /* make an extra lost+found dir for root inode */
-        if (pnid == nid) {
-#define NUMBFS_LOSTFOUND        "lost+found"
-                int child_nid = numbfs_alloc_inode(sbi);
-
-                if (child_nid <= NUMBFS_ROOT_NID) {
-                        err = -ENOMEM;
-                        goto exit;
-                }
-
-                /* make a child dir */
-                err = numbfs_empty_dir(sbi, nid, child_nid);
-                if (err)
-                        goto exit;
-
-                dir++;
-                memcpy(dir->name, NUMBFS_LOSTFOUND, strlen(NUMBFS_LOSTFOUND));
-                dir->name[strlen(NUMBFS_LOSTFOUND)] = '\0';
-                dir->name_len = strlen(NUMBFS_LOSTFOUND);
-                dir->type = DT_DIR;
-                dir->ino = cpu_to_le16(child_nid);
-        }
-
-        err = numbfs_pwrite_inode(inode_i, buf, 0);
+        err = numbfs_pwrite_inode(&inode, buf, 0, inode.size);
         if (err)
-                goto exit;
-
-        /* update metadata */
-        inode_i->mode = S_IFDIR | 0755;
-        inode_i->nlink = 2;
-        inode_i->uid = (__uint16_t)getuid();
-        inode_i->gid = (__uint16_t)getgid();
-        inode_i->size = pnid == nid ? sizeof(struct numbfs_dirent) * 3 :
-                                      sizeof(struct numbfs_dirent) * 2;
-        err = numbfs_dump_inode(inode_i);
-exit:
-        free(inode_i);
-        return err;
+                return err;
+        return nid;
 }
