@@ -39,10 +39,13 @@ struct numbfs_super_block {
 	__le32 s_data_start;
 	/* num of inodes*/
 	__le32 s_num_inodes;
-	/* num of free blocks*/
-	__le32 s_nfree_blocks;
+	/* num of total data blocks */
+	__le32 s_data_blocks;
+	/* num of free data blocks */
+	__le32 s_free_blocks;
 	/* reserved */
-	__u8 s_reserved[96];
+	__u8 s_reserved[92];
+
 };
 
 /* 64-byte on-disk numbfs inode */

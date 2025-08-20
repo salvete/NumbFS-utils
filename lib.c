@@ -62,7 +62,8 @@ int numbfs_get_superblock(struct numbfs_superblock_info *sbi, int fd)
         sbi->bbitmap_start      = le32_to_cpu(sb->s_bbitmap_start);
         sbi->data_start         = le32_to_cpu(sb->s_data_start);
         sbi->num_inodes         = le32_to_cpu(sb->s_num_inodes);
-        sbi->nfree_blocks       = le32_to_cpu(sb->s_nfree_blocks);
+        sbi->data_blocks        = le32_to_cpu(sb->s_data_blocks);
+        sbi->free_blocks        = le32_to_cpu(sb->s_free_blocks);
         sbi->feature            = le32_to_cpu(sb->s_feature);
         return 0;
 }
@@ -74,7 +75,7 @@ int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
         char buf[BYTES_PER_BLOCK];
 
         ret = -1;
-        for (i = 0; i < sbi->nfree_blocks; i++) {
+        for (i = 0; i < sbi->data_blocks; i++) {
                 /* read a new block */
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
                         err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(sbi, i));
@@ -95,6 +96,7 @@ int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
                 }
 
         }
+        sbi->free_blocks--;
         return ret + sbi->data_start;
 }
 
@@ -115,6 +117,7 @@ int numbfs_free_block(struct numbfs_superblock_info *sbi, int blkno)
         buf[byte] &= ~(1 << bit);
 
         err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(sbi, blkno));
+        sbi->free_blocks++;
         return err;
 }
 

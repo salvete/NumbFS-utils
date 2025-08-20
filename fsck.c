@@ -186,7 +186,8 @@ static int numbfs_fsck(int argc, char **argv)
         printf("    block bitmap start:         %d\n", sbi.bbitmap_start);
         printf("    data zone start:            %d\n", sbi.data_start);
         printf("    total inodes:               %d\n", sbi.num_inodes);
-        printf("    total free data blocks:     %d\n", sbi.nfree_blocks);
+        printf("    total free blocks:          %d\n", sbi.free_blocks);
+        printf("    total data blocks:          %d\n", sbi.data_blocks);
 
         if (cfg.show_inodes) {
                 cnt = 0;
@@ -215,7 +216,8 @@ static int numbfs_fsck(int argc, char **argv)
 
                         cnt += numbfs_fsck_used(buf);
                 }
-                printf("    blocks usage:               %.2f%%\n", 100.0 * cnt / sbi.nfree_blocks);
+                BUG_ON(cnt != sbi.data_blocks - sbi.free_blocks);
+                printf("    blocks usage:               %.2f%%\n", 100.0 * cnt / sbi.data_blocks);
         }
 
         if (cfg.nid > 0) {

@@ -13,7 +13,8 @@ struct numbfs_superblock_info {
         int fd;
         int feature;
         int num_inodes;
-        int nfree_blocks;
+        int data_blocks;
+        int free_blocks;
         int ibitmap_start;
         int inode_start;
         int bbitmap_start;

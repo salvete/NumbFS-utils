@@ -37,12 +37,13 @@ static void init_sbi(int fd)
 
         remain = total_blocks - sbi.bbitmap_start - 1;
         /* nr free data blocks */
-        sbi.nfree_blocks = remain -
+        sbi.data_blocks = remain -
                         DIV_ROUND_UP(DIV_ROUND_UP(remain, BITS_PER_BYTE), BYTES_PER_BLOCK);
+        sbi.free_blocks = sbi.data_blocks;
 
         start = 2;
         end = sbi.bbitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.nfree_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.data_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
         memset(buf, 0, sizeof(buf));
         /* clear all the bits in range [start, end] */
         for (i = start; i < end; i++) {
@@ -117,7 +118,7 @@ static int numbfs_block_count(void)
         int cnt = 0, i, byte, bit;
         char buf[BYTES_PER_BLOCK];
 
-        for (i = 0; i < sbi.nfree_blocks; i++) {
+        for (i = 0; i < sbi.data_blocks; i++) {
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
                         assert(!numbfs_read_block(&sbi, buf, numbfs_bmap_blk(&sbi, i)));
                 byte = numbfs_bmap_byte(i);
@@ -135,9 +136,15 @@ static void test_block_management(void)
         int blks[TEST_TIMES];
         int i;
 
+        assert(sbi.free_blocks == total_blocks);
+
         for (i = 0; i < TEST_TIMES; i++) {
+                int free_blocks;
+
                 blks[i] = numbfs_alloc_block(&sbi);
-                assert(total_blocks - numbfs_block_count() == i + 1);
+                free_blocks = numbfs_block_count();
+                assert(total_blocks - free_blocks == i + 1);
+                assert(sbi.free_blocks == free_blocks);
         }
 
         for (int i = 0; i < TEST_TIMES; i++) {

@@ -199,13 +199,14 @@ static int numbfs_mkfs(void)
                         DIV_ROUND_UP(sbi.num_inodes * sizeof(struct numbfs_inode), BYTES_PER_BLOCK);
 
         remain = total_blocks - sbi.bbitmap_start - 1;
-        /* nr free data blocks */
-        sbi.nfree_blocks = remain -
+        /* nr total data blocks */
+        sbi.data_blocks = remain -
                         DIV_ROUND_UP(DIV_ROUND_UP(remain, BITS_PER_BYTE), BYTES_PER_BLOCK);
+        sbi.free_blocks = sbi.data_blocks;
 
         start = 2;
         end = sbi.bbitmap_start +
-                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.nfree_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
+                        DIV_ROUND_UP(DIV_ROUND_UP(sbi.data_blocks, BITS_PER_BYTE), BYTES_PER_BLOCK);
         memset(buf, 0, sizeof(buf));
         /* clear all the bits in range [start, end] */
         for (i = start; i < end; i++) {
@@ -245,7 +246,7 @@ static int numbfs_mkfs(void)
         printf("    ibitmap_start: %d\n", sbi.ibitmap_start);
         printf("    inodes_start: %d\n", sbi.inode_start);
         printf("    bbitmap_start: %d\n", sbi.bbitmap_start);
-        printf("    num_free_blocks: %d\n", sbi.nfree_blocks);
+        printf("    num_free_blocks: %d\n", sbi.free_blocks);
 #endif
 
         /* create the root inode */
@@ -264,7 +265,8 @@ static int numbfs_mkfs(void)
         sb->s_bbitmap_start = cpu_to_le32(sbi.bbitmap_start);
         sb->s_data_start = cpu_to_le32(sbi.data_start);
         sb->s_num_inodes = cpu_to_le32(sbi.num_inodes);
-        sb->s_nfree_blocks = cpu_to_le32(sbi.nfree_blocks);
+        sb->s_data_blocks = cpu_to_le32(sbi.data_blocks);
+        sb->s_free_blocks = cpu_to_le32(sbi.free_blocks);
 
         return numbfs_write_block(&sbi, buf, NUMBFS_SUPER_OFFSET / BYTES_PER_BLOCK);
 }
