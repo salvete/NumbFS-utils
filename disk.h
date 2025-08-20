@@ -18,7 +18,7 @@
 #define NUMBFS_HOLE	(-32)
 
 /* root inode number */
-#define NUMBFS_ROOT_NID	1
+#define NUMBFS_ROOT_NID	0
 
 #define NUMBFS_NUM_DATA_ENTRY	10
 #define NUMBFS_MAX_PATH_LEN	60

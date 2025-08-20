@@ -25,7 +25,7 @@ static void init_sbi(int fd)
         total_blocks = sbi.size / BYTES_PER_BLOCK;
 
         sbi.total_inodes = TEST_NUM_INODES;
-        sbi.free_inodes = sbi.total_inodes - NUMBFS_ROOT_NID;
+        sbi.free_inodes = sbi.total_inodes;
 
         /* inode bitmap start block addr */
         sbi.ibitmap_start = 2;
@@ -143,7 +143,7 @@ static int numbfs_block_count(void)
 
         for (i = 0; i < sbi.data_blocks; i++) {
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
-                        assert(!numbfs_read_block(&sbi, buf, numbfs_bmap_blk(&sbi, i)));
+                        assert(!numbfs_read_block(&sbi, buf, numbfs_bmap_blk(sbi.bbitmap_start, i)));
                 byte = numbfs_bmap_byte(i);
                 bit = numbfs_bmap_bit(i);
                 if (!(buf[byte] & (1 << bit)))
@@ -164,7 +164,7 @@ static void test_block_management(void)
         for (i = 0; i < TEST_TIMES; i++) {
                 int free_blocks;
 
-                blks[i] = numbfs_alloc_block(&sbi);
+                assert(!numbfs_alloc_block(&sbi, &blks[i]));
                 free_blocks = numbfs_block_count();
                 assert(total_blocks - free_blocks == i + 1);
                 assert(sbi.free_blocks == free_blocks);
@@ -183,11 +183,10 @@ static int numbfs_inode_count(void)
 
         for (i = 0; i < sbi.total_inodes; i++) {
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0)
-                        assert(!numbfs_read_block(&sbi, buf, numbfs_imap_blk(&sbi, i)));
-                if (i < NUMBFS_ROOT_NID)
-                        continue;
-                byte = numbfs_imap_byte(i);
-                bit = numbfs_imap_bit(i);
+                        assert(!numbfs_read_block(&sbi, buf, numbfs_bmap_blk(sbi.ibitmap_start, i)));
+
+                byte = numbfs_bmap_byte(i);
+                bit = numbfs_bmap_bit(i);
                 if (!(buf[byte] & (1 << bit)))
                         cnt++;
         }
@@ -208,7 +207,7 @@ static void test_inode_management(void)
 
                 assert(!numbfs_alloc_inode(&sbi, &inodes[i]));
                 free_inodes = numbfs_inode_count();
-                assert(total_inodes - free_inodes == i + 1);
+                assert(total_inodes - i - 1 == free_inodes);
                 assert(sbi.free_inodes == free_inodes);
         }
 

@@ -222,7 +222,7 @@ static int numbfs_fsck(int argc, char **argv)
                 printf("    blocks usage:               %.2f%%\n", 100.0 * cnt / sbi.data_blocks);
         }
 
-        if (cfg.nid > 0) {
+        if (cfg.nid >= 0) {
                 err = numbfs_fsck_show_inode(&sbi, cfg.nid);
                 if (err) {
                         fprintf(stderr, "error: failed to show inode information\n");
