@@ -43,10 +43,9 @@ struct numbfs_inode_info {
 #define NUMBFS_NODES_PER_BLOCK  (BYTES_PER_BLOCK / sizeof(struct numbfs_inode))
 
 /* calculate the block number of the bitmap related to @blkno */
-static inline int numbfs_bmap_blk(struct numbfs_superblock_info *sbi,
-                                  int blkno)
+static inline int numbfs_bmap_blk(int startblk, int blkno)
 {
-        return sbi->bbitmap_start + blkno / NUMBFS_BLOCKS_PER_BLOCK;
+        return startblk + blkno / NUMBFS_BLOCKS_PER_BLOCK;
 }
 
 /* calculate the byte number in the block related to @blkno */
@@ -67,20 +66,10 @@ static inline int numbfs_inode_blk(struct numbfs_superblock_info *sbi,
         return sbi->inode_start + nid / NUMBFS_NODES_PER_BLOCK;
 }
 
-static inline int numbfs_imap_blk(struct numbfs_superblock_info *sbi,
-                                  int nid)
+static inline int numbfs_data_blk(struct numbfs_superblock_info *sbi,
+                                  int blk)
 {
-        return sbi->ibitmap_start +  nid / NUMBFS_BLOCKS_PER_BLOCK;
-}
-
-static inline int numbfs_imap_byte(int nid)
-{
-        return  (nid % NUMBFS_BLOCKS_PER_BLOCK) / BITS_PER_BYTE;
-}
-
-static inline int numbfs_imap_bit(int nid)
-{
-        return (nid % NUMBFS_BLOCKS_PER_BLOCK) % BITS_PER_BYTE;
+        return sbi->data_start + blk;
 }
 
 /* read/write the blkno-th block in the device */
@@ -93,7 +82,7 @@ int numbfs_write_block(struct numbfs_superblock_info *sbi,
 int numbfs_get_superblock(struct numbfs_superblock_info *sbi, int fd);
 
 /* data block management */
-int numbfs_alloc_block(struct numbfs_superblock_info *sbi);
+int numbfs_alloc_block(struct numbfs_superblock_info *sbi, int *blkno);
 int numbfs_free_block(struct numbfs_superblock_info *sbi, int blkno);
 
 /* get inode information according inode number*/

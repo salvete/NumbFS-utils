@@ -74,17 +74,16 @@ int numbfs_get_superblock(struct numbfs_superblock_info *sbi, int fd)
         return 0;
 }
 
-/* alloc a free data block */
-int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
+static int numbfs_bitmap_alloc(struct numbfs_superblock_info *sbi, int startblk,
+                               int total, int *res, int *status)
 {
-        int ret, i, err, byte, bit;
+        int err, i, byte, bit;
         char buf[BYTES_PER_BLOCK];
 
-        ret = -1;
-        for (i = 0; i < sbi->data_blocks; i++) {
+        for (i = 0; i < total; i++) {
                 /* read a new block */
                 if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
-                        err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(sbi, i));
+                        err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(startblk, i));
                         if (err)
                                 return err;
                 }
@@ -92,39 +91,58 @@ int numbfs_alloc_block(struct numbfs_superblock_info *sbi)
                 byte = numbfs_bmap_byte(i);
                 bit = numbfs_bmap_bit(i);
                 if (!(buf[byte] & (1 << bit))) {
-                        ret = i;
+                        *res = i;
                         /* set this bit to 1 */
                         buf[byte] |= (1 << bit);
-                        err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(sbi, i));
+                        err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(startblk, i));
                         if (err)
                                 return err;
                         break;
                 }
 
         }
-        sbi->free_blocks--;
-        return ret + sbi->data_start;
+        *status -= 1;
+        return 0;
+}
+
+/* alloc a free data block */
+int numbfs_alloc_block(struct numbfs_superblock_info *sbi, int *blkno)
+{
+        if (!sbi->free_blocks)
+                return -ENOMEM;
+
+        return numbfs_bitmap_alloc(sbi, sbi->bbitmap_start, sbi->data_blocks,
+                                   blkno, &sbi->free_blocks);
+}
+
+static int numbfs_bitmap_free(struct numbfs_superblock_info *sbi, int startblk,
+                              int free, int *status)
+{
+        char buf[BYTES_PER_BLOCK];
+        int err, byte, bit;
+
+        err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(startblk, free));
+        if (err)
+                return err;
+
+        byte = numbfs_bmap_byte(free);
+        bit = numbfs_bmap_bit(free);
+        BUG_ON(!(buf[byte] & (1 << bit)));
+        buf[byte] &= ~(1 << bit);
+
+        err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(startblk, free));
+        *status += 1;
+        return 0;
 }
 
 /* free a data block */
 int numbfs_free_block(struct numbfs_superblock_info *sbi, int blkno)
 {
-        char buf[BYTES_PER_BLOCK];
-        int err, byte, bit;
+        if (blkno >= sbi->data_blocks)
+                return -EINVAL;
 
-        blkno -= sbi->data_start;
-        err = numbfs_read_block(sbi, buf, numbfs_bmap_blk(sbi, blkno));
-        if (err)
-                return err;
-
-        byte = numbfs_bmap_byte(blkno);
-        bit = numbfs_bmap_bit(blkno);
-        BUG_ON(!(buf[byte] & (1 << bit)));
-        buf[byte] &= ~(1 << bit);
-
-        err = numbfs_write_block(sbi, buf, numbfs_bmap_blk(sbi, blkno));
-        sbi->free_blocks++;
-        return err;
+        return numbfs_bitmap_free(sbi, sbi->bbitmap_start,
+                                  blkno, &sbi->free_blocks);
 }
 
 /* get the inode info at @inode_i->nid */
@@ -173,14 +191,15 @@ int numbfs_inode_blkaddr(struct numbfs_inode_info *inode, int pos, bool alloc, b
         if (alloc && inode->data[pos / BYTES_PER_BLOCK] == NUMBFS_HOLE) {
                 char buf[BYTES_PER_BLOCK];
 
-                blkno = numbfs_alloc_block(inode->sbi);
-                if (blkno < 0) {
+                err = numbfs_alloc_block(inode->sbi, &blkno);
+                if (err) {
                         fprintf(stderr, "failed to alloc data block\n");
-                        return blkno;
+                        return err;
                 }
 
                 memset(buf, 0, BYTES_PER_BLOCK);
-                err = numbfs_write_block(inode->sbi, buf, blkno);
+                err = numbfs_write_block(inode->sbi, buf,
+                                numbfs_data_blk(inode->sbi, blkno));
                 if (err)
                         return err;
 
@@ -262,13 +281,15 @@ int numbfs_pwrite_inode(struct numbfs_inode_info *inode_i,
         if (target < 0)
                 return target;
 
-        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        err = numbfs_read_block(inode_i->sbi, tmp,
+                        numbfs_data_blk(inode_i->sbi, target));
         if (err)
                 return err;
 
         memcpy(tmp + off, buf, len);
 
-        err = numbfs_write_block(inode_i->sbi, tmp, target);
+        err = numbfs_write_block(inode_i->sbi, tmp,
+                        numbfs_data_blk(inode_i->sbi, target));
         if (err)
                 return err;
 
@@ -296,7 +317,8 @@ int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
                 return 0;
         }
 
-        err = numbfs_read_block(inode_i->sbi, tmp, target);
+        err = numbfs_read_block(inode_i->sbi, tmp,
+                        numbfs_data_blk(inode_i->sbi, target));
         if (err)
                 return err;
 
@@ -307,65 +329,20 @@ int numbfs_pread_inode(struct numbfs_inode_info *inode_i,
 /* get a empty inode */
 int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid)
 {
-        int i, err, byte, bit;
-        char buf[BYTES_PER_BLOCK];
-
         if (!sbi->free_inodes)
                 return -ENOMEM;
 
-        err = -ENOENT;
-        for (i = 0; i < sbi->total_inodes; i++) {
-                /* read a new block */
-                if (i % NUMBFS_BLOCKS_PER_BLOCK == 0) {
-                        err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, i));
-                        if (err)
-                                return err;
-                }
-
-                if (i < NUMBFS_ROOT_NID)
-                        continue;
-
-                byte = numbfs_bmap_byte(i);
-                bit = numbfs_bmap_bit(i);
-                if (!(buf[byte] & (1 << bit))) {
-                        *nid = i;
-                        err = 0;
-                        /* set this bit to 1 */
-                        buf[byte] |= (1 << bit);
-                        err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, i));
-                        if (err)
-                                return err;
-                        break;
-                }
-
-        }
-
-        if (!err)
-                sbi->free_inodes--;
-        return err;
+        return numbfs_bitmap_alloc(sbi, sbi->ibitmap_start,
+                                   sbi->total_inodes, nid, &sbi->free_inodes);
 }
 
 int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid)
 {
-        int err, byte, bit;
-        char buf[BYTES_PER_BLOCK];
+        if (nid >= sbi->total_inodes)
+                return -EINVAL;
 
-        if (nid < NUMBFS_ROOT_NID || nid >= sbi->total_inodes)
-                return 0;
-
-        err = numbfs_read_block(sbi, buf, numbfs_imap_blk(sbi, nid));
-        if (err)
-                return err;
-
-        byte = numbfs_bmap_byte(nid);
-        bit = numbfs_bmap_bit(nid);
-        BUG_ON(!(buf[byte] & (1 << bit)));
-        buf[byte] &= ~(1 << bit);
-        err = numbfs_write_block(sbi, buf, numbfs_imap_blk(sbi, nid));
-        if (err)
-                return err;
-        sbi->free_inodes++;
-        return 0;
+        return numbfs_bitmap_free(sbi, sbi->ibitmap_start, nid,
+                                  &sbi->free_inodes);
 }
 
 int numbfs_empty_dir(struct numbfs_superblock_info *sbi, int pnid)
