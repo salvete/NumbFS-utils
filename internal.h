@@ -113,7 +113,6 @@ int numbfs_alloc_inode(struct numbfs_superblock_info *sbi, int *nid);
 int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid);
 
 /* make an empty dir */
-int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
-                     int pnid, int *nid);
+int numbfs_empty_dir(struct numbfs_superblock_info *sbi, int pnid);
 
 #endif

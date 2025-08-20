@@ -136,6 +136,40 @@ static void numbfs_init_config(void)
         sbi.size = -1;
 }
 
+static int numbfs_mkdir_lostfound(void)
+{
+#define LOSTFOUND       "lost+found"
+#define LOSTFOUNDLEN    strlen(LOSTFOUND)
+        struct numbfs_inode_info ni;
+        struct numbfs_dirent *dir;
+        char buf[BYTES_PER_BLOCK];
+        int nid;
+        int err;
+
+        nid = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID);
+        if (nid <= NUMBFS_ROOT_NID)
+                return -EINVAL;
+
+        ni.sbi = &sbi;
+        ni.nid = NUMBFS_ROOT_NID;
+        err = numbfs_get_inode(&sbi, &ni);
+        if (err)
+                return err;
+
+        dir = (struct numbfs_dirent*)buf;
+        memcpy(dir->name, LOSTFOUND, LOSTFOUNDLEN);
+        dir->name[LOSTFOUNDLEN] = '\0';
+        dir->name_len = LOSTFOUNDLEN;
+        dir->ino = nid;
+        dir->type = DT_DIR;
+        err = numbfs_pwrite_inode(&ni, buf, ni.size, sizeof(*dir));
+        if (err)
+                return err;
+#undef  LOSTFOUND
+#undef  LOSTFOUNDLEN
+        return 0;
+}
+
 /*
  * The disk layout:
  * | reserved | superblock | inode bitmap | inodes | block bitmap | data |
@@ -148,7 +182,6 @@ static int numbfs_mkfs(void)
         off_t start, end;
         struct stat st;
         long long dev_size;
-        int root_nid;
 
         err = fstat(sbi.fd, &st);
         if (err) {
@@ -253,11 +286,15 @@ static int numbfs_mkfs(void)
 #endif
 
         /* create the root inode */
-        err = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID, &root_nid);
-        if (err) {
+        err = numbfs_empty_dir(&sbi, NUMBFS_ROOT_NID);
+        if (err != NUMBFS_ROOT_NID) {
                 fprintf(stderr, "failed to prepare root inode, err: %d\n", err);
                 return err;
         }
+
+        err = numbfs_mkdir_lostfound();
+        if (err)
+                return err;
 
         memset(buf, 0, BYTES_PER_BLOCK);
         sb = (struct numbfs_super_block*)buf;

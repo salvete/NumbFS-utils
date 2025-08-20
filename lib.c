@@ -12,6 +12,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#define DOT             "."
+#define DOTDOT          ".."
+#define DOTLEN          strlen(DOT)
+#define DOTDOTLEN       strlen(DOTDOT)
+
 int numbfs_read_block(struct numbfs_superblock_info *sbi,
                       char buf[BYTES_PER_BLOCK], int blkno)
 {
@@ -363,87 +368,45 @@ int numbfs_free_inode(struct numbfs_superblock_info *sbi, int nid)
         return 0;
 }
 
-/* make a empty dir, nid stored in @nid */
-int numbfs_empty_dir(struct numbfs_superblock_info *sbi,
-                     int pnid, int *nid)
+int numbfs_empty_dir(struct numbfs_superblock_info *sbi, int pnid)
 {
-        char buf[BYTES_PER_BLOCK];
-        struct numbfs_inode_info *inode_i;
+        struct numbfs_inode_info inode;
         struct numbfs_dirent *dir;
-        int err, i, size = 0;
+        char buf[BYTES_PER_BLOCK];
+        int nid, err, i;
 
-        err = numbfs_alloc_inode(sbi, nid);
+        err = numbfs_alloc_inode(sbi, &nid);
         if (err)
                 return err;
 
-        inode_i = malloc(sizeof(*inode_i));
-        if (!inode_i)
-                return -ENOMEM;
-
-        inode_i->nid = *nid;
-        inode_i->sbi = sbi;
-        err = numbfs_get_inode(sbi, inode_i);
-        if (err)
-                goto exit;
-
-        /* sanity check */
+        inode.nid = nid;
+        inode.sbi = sbi;
+        inode.mode = S_IFDIR | 0755;
+        inode.nlink = 2;
+        inode.uid = (__uint16_t)getuid();
+        inode.gid = (__uint16_t)getgid();
+        inode.size = 0;
         for (i = 0; i < NUMBFS_NUM_DATA_ENTRY; i++)
-                BUG_ON(inode_i->data[i] != NUMBFS_HOLE);
+                inode.data[i] = NUMBFS_HOLE;
 
-        /* write data block */
-        memset(buf, 0, BYTES_PER_BLOCK);
         dir = (struct numbfs_dirent*)buf;
-        memcpy(dir->name, "..", 2);
-        dir->name[2] = '\0';
-        dir->name_len = 2;
-        dir->ino = cpu_to_le16(pnid);
+        memcpy(dir->name, DOT, DOTLEN);
+        dir->name[DOTLEN] = '\0';
+        dir->name_len = DOTLEN;
+        dir->ino = cpu_to_le16(nid);
         dir->type = DT_DIR;
-        size += sizeof(struct numbfs_dirent);
+        inode.size += sizeof(struct numbfs_dirent);
 
         dir++;
-        memcpy(dir->name, ".", 1);
-        dir->name[1] = '\0';
-        dir->name_len = 1;
-        dir->ino = cpu_to_le16(*nid);
+        memcpy(dir->name, DOTDOT, DOTDOTLEN);
+        dir->name[DOTDOTLEN] = '\0';
+        dir->name_len = DOTDOTLEN;
+        dir->ino = cpu_to_le16(pnid);
         dir->type = DT_DIR;
-        size += sizeof(struct numbfs_dirent);
+        inode.size += sizeof(struct numbfs_dirent);
 
-        /* make an extra lost+found dir for root inode */
-        if (pnid == *nid) {
-#define NUMBFS_LOSTFOUND        "lost+found"
-                int child_nid;
-
-                /* make a child dir */
-                err = numbfs_empty_dir(sbi, *nid, &child_nid);
-                if (err)
-                        goto exit;
-
-                if (child_nid <= NUMBFS_ROOT_NID) {
-                        err = -ENOMEM;
-                        goto exit;
-                }
-
-                dir++;
-                memcpy(dir->name, NUMBFS_LOSTFOUND, strlen(NUMBFS_LOSTFOUND));
-                dir->name[strlen(NUMBFS_LOSTFOUND)] = '\0';
-                dir->name_len = strlen(NUMBFS_LOSTFOUND);
-                dir->type = DT_DIR;
-                dir->ino = cpu_to_le16(child_nid);
-                size += sizeof(struct numbfs_dirent);
-        }
-
-        /* update metadata */
-        inode_i->mode = S_IFDIR | 0755;
-        inode_i->nlink = 2;
-        inode_i->uid = (__uint16_t)getuid();
-        inode_i->gid = (__uint16_t)getgid();
-        inode_i->size = size;
-
-        err = numbfs_pwrite_inode(inode_i, buf, 0, size);
+        err = numbfs_pwrite_inode(&inode, buf, 0, inode.size);
         if (err)
-                goto exit;
-
-exit:
-        free(inode_i);
-        return err;
+                return err;
+        return nid;
 }

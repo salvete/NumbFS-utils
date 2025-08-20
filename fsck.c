@@ -139,8 +139,7 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                 printf("    DIR CONTENT\n");
                 for (i = 0; i < inode_i->size; i += sizeof(struct numbfs_dirent)) {
                         if (i % BYTES_PER_BLOCK == 0) {
-                                err = numbfs_pread_inode(inode_i, buf,
-                                        (i / BYTES_PER_BLOCK) * BYTES_PER_BLOCK, BYTES_PER_BLOCK);
+                                err = numbfs_pread_inode(inode_i, buf, i, BYTES_PER_BLOCK);
                                 if (err) {
                                         fprintf(stderr, "error: failed to read block@%d of inode@%d\n",
                                                 i / BYTES_PER_BLOCK, nid);
