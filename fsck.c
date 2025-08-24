@@ -103,7 +103,12 @@ static int numbfs_fsck_used(char *buf)
 
 static inline char *numbfs_dir_type(int type)
 {
-        return type == DT_DIR ? "DIR    " : "REGULAR";
+        if (type == DT_DIR)
+                return "DIR    ";
+        else if (type == DT_LNK)
+                return "SYMLINK";
+        else
+                return "REGULAR";
 }
 
 /* show the inode information at @nid */
@@ -133,6 +138,8 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
         printf("    inode number:               %d\n", nid);
         if (S_ISDIR(inode_i->mode))
                 printf("    inode type:                 DIR\n");
+        else if (S_ISLNK(inode_i->mode))
+                printf("    inode type:                 SYMLINK\n");
         else
                 printf("    inode type:                 REGULAR FILE\n");
         printf("    link count:                 %d\n", inode_i->nlink);
