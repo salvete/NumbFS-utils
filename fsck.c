@@ -101,6 +101,16 @@ static int numbfs_fsck_used(char *buf)
         return ret;
 }
 
+static inline char *numbfs_dir_type(int type)
+{
+        if (type == DT_DIR)
+                return "DIR    ";
+        else if (type == DT_LNK)
+                return "SYMLINK";
+        else
+                return "REGULAR";
+}
+
 /* show the inode information at @nid */
 static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                                   int nid)
@@ -128,6 +138,8 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
         printf("    inode number:               %d\n", nid);
         if (S_ISDIR(inode_i->mode))
                 printf("    inode type:                 DIR\n");
+        else if (S_ISLNK(inode_i->mode))
+                printf("    inode type:                 SYMLINK\n");
         else
                 printf("    inode type:                 REGULAR FILE\n");
         printf("    link count:                 %d\n", inode_i->nlink);
@@ -147,7 +159,8 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                                 }
                         }
                         dir = (struct numbfs_dirent*)&buf[i];
-                        printf("       INODE: %05d, NAMELEN: %02d NAME: %s\n", le16_to_cpu(dir->ino), dir->name_len, dir->name);
+                        printf("       INODE: %05d, TYPE: %s, NAMELEN: %02d NAME: %s\n",
+                                le16_to_cpu(dir->ino), numbfs_dir_type(dir->type),dir->name_len, dir->name);
                 }
         }
 

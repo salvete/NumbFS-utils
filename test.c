@@ -206,6 +206,7 @@ static void test_inode_management(void)
                 int free_inodes;
 
                 assert(!numbfs_alloc_inode(&sbi, &inodes[i]));
+                assert(inodes[i] == i);
                 free_inodes = numbfs_inode_count();
                 assert(total_inodes - i - 1 == free_inodes);
                 assert(sbi.free_inodes == free_inodes);
