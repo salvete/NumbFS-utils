@@ -147,6 +147,13 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
         printf("    inode gid:                  %d\n", inode_i->gid);
         printf("    inode size:                 %d\n\n", inode_i->size);
 
+        for (i = 0; i < NUMBFS_NUM_DATA_ENTRY; i++) {
+                if (inode_i->data[i] != NUMBFS_HOLE)
+                        printf("blk@%d: %d\n", i, numbfs_data_blk(sbi, inode_i->data[i]));
+                else
+                        printf("blk@%d: HOLE\n", i);
+        }
+
         if (S_ISDIR(inode_i->mode)) {
                 printf("    DIR CONTENT\n");
                 for (i = 0; i < inode_i->size; i += sizeof(struct numbfs_dirent)) {
@@ -158,7 +165,7 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                                         goto exit;
                                 }
                         }
-                        dir = (struct numbfs_dirent*)&buf[i];
+                        dir = (struct numbfs_dirent*)&buf[i % BYTES_PER_BLOCK];
                         printf("       INODE: %05d, TYPE: %s, NAMELEN: %02d NAME: %s\n",
                                 le16_to_cpu(dir->ino), numbfs_dir_type(dir->type),dir->name_len, dir->name);
                 }
