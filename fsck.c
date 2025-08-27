@@ -158,7 +158,7 @@ static int numbfs_fsck_show_inode(struct numbfs_superblock_info *sbi,
                                         goto exit;
                                 }
                         }
-                        dir = (struct numbfs_dirent*)&buf[i];
+                        dir = (struct numbfs_dirent*)&buf[i % BYTES_PER_BLOCK];
                         printf("       INODE: %05d, TYPE: %s, NAMELEN: %02d NAME: %s\n",
                                 le16_to_cpu(dir->ino), numbfs_dir_type(dir->type),dir->name_len, dir->name);
                 }
